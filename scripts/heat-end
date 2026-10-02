@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# Ask one of your own processes to quit.
+# Usage: heat-end <pid>
+#
+# Sends the ordinary termination request (SIGTERM), never a forced kill, and
+# only to a process that belongs to the calling user.
+
+set -euo pipefail
+
+pid="${1:-}"
+
+if [[ ! $pid =~ ^[1-9][0-9]*$ ]]; then
+  echo "Not a process id: $pid" >&2
+  exit 2
+fi
+
+if [[ ! -d /proc/$pid ]]; then
+  echo "Process $pid is already gone" >&2
+  exit 0
+fi
+
+if [[ $(stat -c %u "/proc/$pid") != "$(id -u)" ]]; then
+  echo "Process $pid belongs to another user" >&2
+  exit 1
+fi
+
+kill -TERM "$pid"

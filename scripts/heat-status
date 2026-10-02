@@ -1,0 +1,169 @@
+#!/bin/bash
+
+# Report what heats this computer, as JSON.
+# Usage: heat-status [--brief]
+#
+# --brief prints only the CPU temperature, for the bar icon. The full report
+# watches the processes for a moment, so it takes about a second.
+
+set -uo pipefail
+
+sample_seconds=1
+top_count=6
+
+# CPU temperature in whole °C, from the first sensor that has one
+cpu_temp() {
+  local dir name file
+  for dir in /sys/class/hwmon/hwmon*; do
+    name=$(cat "$dir/name" 2>/dev/null) || continue
+    case $name in
+      coretemp | k10temp | zenpower | cpu_thermal | cputemp)
+        file="$dir/temp1_input"
+        [[ -r $file ]] && { echo $(($(cat "$file") / 1000)); return; }
+        ;;
+    esac
+  done
+  for dir in /sys/class/thermal/thermal_zone*; do
+    case $(cat "$dir/type" 2>/dev/null) in
+      x86_pkg_temp | cpu-thermal | acpitz)
+        echo $(($(cat "$dir/temp") / 1000))
+        return
+        ;;
+    esac
+  done
+  echo null
+}
+
+if [[ ${1:-} == "--brief" ]]; then
+  printf '{"cpuTemp":%s}\n' "$(cpu_temp)"
+  exit 0
+fi
+
+hwmon_temp() {
+  local dir
+  for dir in /sys/class/hwmon/hwmon*; do
+    if [[ $(cat "$dir/name" 2>/dev/null) == "$1" && -r $dir/temp1_input ]]; then
+      echo $(($(cat "$dir/temp1_input") / 1000))
+      return
+    fi
+  done
+  echo null
+}
+
+# nvidia-smi wakes a sleeping graphics card, which would create the very heat
+# this report is about. Only ask a card that is already running.
+nvidia_awake() {
+  local dev
+  for dev in /sys/bus/pci/devices/*; do
+    [[ $(cat "$dev/vendor" 2>/dev/null) == 0x10de && $(cat "$dev/class" 2>/dev/null) == 0x03* ]] || continue
+    [[ $(cat "$dev/power/runtime_status" 2>/dev/null) == active ]] && return 0
+  done
+  return 1
+}
+
+gpu_json() {
+  local line temp
+  if command -v nvidia-smi >/dev/null && nvidia_awake; then
+    line=$(nvidia-smi --query-gpu=name,temperature.gpu,utilization.gpu,power.draw \
+      --format=csv,noheader,nounits 2>/dev/null | head -n1)
+    if [[ -n $line ]]; then
+      jq -cn --arg line "$line" '$line | split(", ") |
+        {name: .[0], temp: (.[1] | tonumber?), load: (.[2] | tonumber?), watts: (.[3] | tonumber? | if . then round else null end)}'
+      return
+    fi
+  fi
+  for name in amdgpu nouveau; do
+    temp=$(hwmon_temp "$name")
+    if [[ $temp != null ]]; then
+      jq -cn --arg name "$name" --argjson temp "$temp" '{name: $name, temp: $temp, load: null, watts: null}'
+      return
+    fi
+  done
+  echo null
+}
+
+profile_json() {
+  if ! command -v powerprofilesctl >/dev/null; then
+    echo '{"active":null,"available":[]}'
+    return
+  fi
+  jq -cn --arg active "$(powerprofilesctl get 2>/dev/null)" \
+    --arg list "$(powerprofilesctl list 2>/dev/null | sed -n 's/^[* ]*\([a-z-]*\):$/\1/p')" \
+    '{active: (if $active == "" then null else $active end), available: ($list | split("\n") | map(select(. != "")))}'
+}
+
+# pid, CPU ticks and name of every process. The name may contain spaces and
+# brackets, so the fields are counted from the last ")".
+snapshot() {
+  cat /proc/[0-9]*/stat 2>/dev/null | awk '{
+    close_at = 0
+    for (i = length($0); i > 0; i--) if (substr($0, i, 1) == ")") { close_at = i; break }
+    open_at = index($0, "(")
+    if (!close_at || !open_at) next
+    split(substr($0, close_at + 2), rest, " ")
+    print substr($0, 1, open_at - 2) "\t" rest[12] + rest[13] "\t" substr($0, open_at + 1, close_at - open_at - 1)
+  }'
+}
+
+cpu_ticks() {
+  awk '/^cpu / { print $2 + $3 + $4 + $7 + $8 + $9, $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9 }' /proc/stat
+}
+
+# What a helper process of a browser or an interpreter is actually doing
+detail_of() {
+  local pid=$1 name=$2 args
+  if grep -q -E 'docker|containerd|libpod' "/proc/$pid/cgroup" 2>/dev/null; then
+    echo "in a container"
+    return
+  fi
+  args=$(tr '\0' '\n' <"/proc/$pid/cmdline" 2>/dev/null) || return
+  case $(grep -m1 -o -- '--type=[a-z-]*' <<<"$args") in
+    --type=renderer) echo "tab or extension"; return ;;
+    --type=gpu-process) echo "graphics"; return ;;
+    --type=utility) echo "helper"; return ;;
+  esac
+  case $name in
+    python* | node | bash | sh | ruby | perl)
+      basename -- "$(sed -n '2,$p' <<<"$args" | grep -m1 -v '^-')" 2>/dev/null
+      ;;
+  esac
+}
+
+hz=$(getconf CLK_TCK)
+read -r busy_before total_before < <(cpu_ticks)
+before=$(snapshot)
+started=$(cut -d' ' -f1 /proc/uptime)
+sleep "$sample_seconds"
+after=$(snapshot)
+elapsed=$(awk -v a="$started" -v b="$(cut -d' ' -f1 /proc/uptime)" 'BEGIN { print b - a }')
+read -r busy_after total_after < <(cpu_ticks)
+
+# Percent of one CPU core each process used during the sample, busiest first
+top=$(awk -F'\t' -v hz="$hz" -v elapsed="$elapsed" '
+  NR == FNR { ticks[$1] = $2; next }
+  ($1 in ticks) && $2 > ticks[$1] { printf "%d\t%.0f\t%s\n", $1, ($2 - ticks[$1]) / hz / elapsed * 100, $3 }
+' <(echo "$before") <(echo "$after") | sort -t$'\t' -k2,2 -nr | head -n "$top_count")
+
+processes="[]"
+while IFS=$'\t' read -r pid cpu name; do
+  [[ -n $pid && $pid != "$$" ]] || continue
+  owner=$(stat -c %u "/proc/$pid" 2>/dev/null) || continue
+  mine=false
+  [[ $owner == "$(id -u)" ]] && mine=true
+  processes=$(jq -c --argjson pid "$pid" --argjson cpu "$cpu" --arg name "$name" \
+    --arg detail "$(detail_of "$pid" "$name")" --argjson mine "$mine" \
+    '. + [{pid: $pid, name: $name, detail: $detail, cpu: $cpu, mine: $mine}]' <<<"$processes")
+done <<<"$top"
+
+jq -cn \
+  --argjson cpuTemp "$(cpu_temp)" \
+  --argjson ssdTemp "$(hwmon_temp nvme)" \
+  --argjson gpu "$(gpu_json)" \
+  --argjson profile "$(profile_json)" \
+  --argjson cores "$(nproc)" \
+  --argjson busy "$((busy_after - busy_before))" \
+  --argjson total "$((total_after - total_before))" \
+  --argjson processes "$processes" \
+  '{cpuTemp: $cpuTemp, ssdTemp: $ssdTemp, gpu: $gpu, profile: $profile, cores: $cores,
+    load: (if $total > 0 then ($busy * 100 / $total | round) else 0 end),
+    processes: $processes}'
