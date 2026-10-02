@@ -11,7 +11,7 @@ Panel {
   ipcTarget: "io.github.badr-emil.heat-check"
 
   property var status: null
-  property var barTemp: null
+  property var brief: null
   property int cursor: -1
   property int confirmPid: 0
   property string error: ""
@@ -20,10 +20,14 @@ Panel {
     Qt.resolvedUrl(".").toString().replace(/^file:\/\//, "")
   )
   readonly property int hotAt: Math.max(50, Math.min(105, Number(setting("hotAt", 85)) || 85))
-  readonly property int refreshInterval: Math.max(5, Number(setting("refreshIntervalSec", 10)) || 10) * 1000
+  readonly property int refreshInterval: Math.max(2, Number(setting("refreshIntervalSec", 5)) || 5) * 1000
   readonly property bool hideWhenCool: setting("hideWhenCool", false) === true
+  // A row of readings does not fit a vertical bar; that one keeps the icon.
+  readonly property bool showReadings: setting("showReadings", true) !== false && !(bar && bar.vertical === true)
+  readonly property bool showLoad: setting("showLoad", false) === true
 
-  readonly property var shownTemp: status ? status.cpuTemp : barTemp
+  readonly property var icons: ({ cpu: "󰘚", gpu: "󰢮", drive: "󰋊" })
+  readonly property var shownTemp: brief ? brief.cpuTemp : null
   readonly property bool hot: Model.level(shownTemp, hotAt) === "hot"
   readonly property var processes: status ? status.processes : []
   readonly property var reasons: Model.reasons(status)
@@ -45,13 +49,13 @@ Panel {
     var parsed = Model.parse(output)
     if (!parsed) return
     status = parsed
-    barTemp = parsed.cpuTemp
+    brief = Model.briefOf(parsed, brief)
     cursor = Math.min(cursor, processes.length - 1)
   }
 
   function applyBrief(output) {
-    var parsed = Model.parse(output)
-    if (parsed) barTemp = parsed.cpuTemp
+    var parsed = Model.parseBrief(output, brief)
+    if (parsed) brief = parsed
   }
 
   function setProfile(profile) {
@@ -98,11 +102,11 @@ Panel {
   }
 
   visible: !hideWhenCool || hot || opened
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
+  implicitWidth: showReadings ? readings.implicitWidth : button.implicitWidth
+  implicitHeight: showReadings ? readings.implicitHeight : button.implicitHeight
 
   // The full report watches the processes for a second, so it only runs while
-  // the panel is open. The bar icon needs nothing but the temperature.
+  // the panel is open. The bar needs nothing but the sensor readings.
   Process {
     id: statusProcess
     command: [root.script("heat-status")]
@@ -160,9 +164,22 @@ Panel {
     onTriggered: root.confirmPid = 0
   }
 
+  WidgetButton {
+    id: readings
+    anchors.fill: parent
+    visible: root.showReadings
+    bar: root.bar
+    text: Model.barText(root.brief, root.icons, root.showLoad)
+    active: root.hot
+    tooltipText: root.opened ? "" : "Processor · graphics card · drive"
+      + (root.hot ? "\nRunning hot. Click to see why." : "\nClick to see what heats the machine.")
+    onPressed: function(b) { root.toggle() }
+  }
+
   BarIconButton {
     id: button
     anchors.fill: parent
+    visible: !root.showReadings
     bar: root.bar
     text: "󰈐"
     active: root.hot
@@ -173,7 +190,7 @@ Panel {
 
   KeyboardPanel {
     id: panel
-    anchorItem: button
+    anchorItem: root.showReadings ? readings : button
     owner: root
     bar: root.bar
     open: root.opened
@@ -258,7 +275,7 @@ Panel {
 
           readonly property var tiles: {
             var s = root.status
-            var list = [{ icon: "󰘚", label: "Processor", temp: s ? s.cpuTemp : root.barTemp, hot: root.hot }]
+            var list = [{ icon: "󰘚", label: "Processor", temp: root.shownTemp, hot: root.hot }]
             if (s && s.gpu) list.push({ icon: "󰢮", label: "Graphics", temp: s.gpu.temp, hot: false })
             if (s && s.ssdTemp !== null) list.push({ icon: "󰋊", label: "Drive", temp: s.ssdTemp, hot: false })
             return list

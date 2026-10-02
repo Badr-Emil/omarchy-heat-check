@@ -3,13 +3,15 @@
 # Report what heats this computer, as JSON.
 # Usage: heat-status [--brief]
 #
-# --brief prints only the CPU temperature, for the bar icon. The full report
-# watches the processes for a moment, so it takes about a second.
+# --brief prints the sensor readings for the bar. The full report also watches
+# the processes for a moment, so it takes about a second.
 
 set -uo pipefail
 
 sample_seconds=1
 top_count=6
+# The bar runs once per display; readings this fresh are shared between them.
+brief_max_age=2
 
 # CPU temperature in whole °C, from the first sensor that has one
 cpu_temp() {
@@ -33,11 +35,6 @@ cpu_temp() {
   done
   echo null
 }
-
-if [[ ${1:-} == "--brief" ]]; then
-  printf '{"cpuTemp":%s}\n' "$(cpu_temp)"
-  exit 0
-fi
 
 hwmon_temp() {
   local dir
@@ -108,6 +105,37 @@ snapshot() {
 cpu_ticks() {
   awk '/^cpu / { print $2 + $3 + $4 + $7 + $8 + $9, $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9 }' /proc/stat
 }
+
+# Sensor readings plus the raw CPU counters; the panel turns two of these
+# into a load figure, so nothing has to wait here.
+brief_json() {
+  local busy total
+  read -r busy total < <(cpu_ticks)
+  jq -cn --argjson cpuTemp "$(cpu_temp)" --argjson ssdTemp "$(hwmon_temp nvme)" --argjson gpu "$(gpu_json)" \
+    --argjson cpuBusy "$busy" --argjson cpuTotal "$total" \
+    '{cpuTemp: $cpuTemp, ssdTemp: $ssdTemp, gpu: $gpu, cpuBusy: $cpuBusy, cpuTotal: $cpuTotal}'
+}
+
+if [[ ${1:-} == "--brief" ]]; then
+  # Without a private runtime directory there is no safe place for the cache
+  if [[ -z ${XDG_RUNTIME_DIR:-} || ! -O $XDG_RUNTIME_DIR ]]; then
+    brief_json
+    exit 0
+  fi
+  cache_dir="$XDG_RUNTIME_DIR/omarchy-heat-check"
+  cache="$cache_dir/brief.json"
+  mkdir -p -m 700 "$cache_dir"
+  # One caller measures, the others wait for it and read its result
+  exec 9>"$cache_dir/lock"
+  flock 9
+  if [[ -s $cache ]] && (($(date +%s) - $(stat -c %Y "$cache") < brief_max_age)); then
+    cat "$cache"
+    exit 0
+  fi
+  brief_json | tee "$cache.tmp"
+  mv -f "$cache.tmp" "$cache"
+  exit 0
+fi
 
 # What a helper process of a browser or an interpreter is actually doing
 detail_of() {

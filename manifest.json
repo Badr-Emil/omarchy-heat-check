@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "io.github.badr-emil.heat-check",
   "name": "Heat Check",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Badr-Emil",
   "license": "MIT",
-  "description": "See why your fans are loud: temperatures, the programs that heat the machine, and a switch for the power profile.",
+  "description": "See why your fans are loud: live temperatures in the bar, the programs that heat the machine, and a switch for the power profile.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "Heat Check",
-    "description": "Shows processor, graphics and drive temperatures, explains in plain words what is heating the machine, lets you end the busiest programs and switch the power profile.",
+    "description": "Shows processor, graphics and drive temperatures live in the bar. The panel explains in plain words what is heating the machine, lets you end the busiest programs and switch the power profile.",
     "category": "System",
     "aliases": [
       "fan",
@@ -26,11 +26,25 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "showReadings": true,
+      "showLoad": false,
       "hotAt": 85,
-      "refreshIntervalSec": 10,
+      "refreshIntervalSec": 5,
       "hideWhenCool": false
     },
     "schema": [
+      {
+        "key": "showReadings",
+        "type": "boolean",
+        "label": "Show the temperatures in the bar instead of an icon",
+        "defaultValue": true
+      },
+      {
+        "key": "showLoad",
+        "type": "boolean",
+        "label": "Also show the processor load in the bar",
+        "defaultValue": false
+      },
       {
         "key": "hotAt",
         "type": "integer",
@@ -43,16 +57,16 @@
       {
         "key": "refreshIntervalSec",
         "type": "integer",
-        "label": "Temperature check interval for the bar icon (seconds)",
-        "min": 5,
+        "label": "Refresh interval of the bar readings (seconds)",
+        "min": 2,
         "max": 300,
         "step": 1,
-        "defaultValue": 10
+        "defaultValue": 5
       },
       {
         "key": "hideWhenCool",
         "type": "boolean",
-        "label": "Only show the icon while the processor is hot",
+        "label": "Only show the widget while the processor is hot",
         "defaultValue": false
       }
     ]

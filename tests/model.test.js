@@ -88,3 +88,29 @@ test("reasons stay honest on a quiet or evenly busy machine", () => {
   ])
   assert.deepEqual(Model.reasons(null), [])
 })
+
+test("the brief report feeds the bar text and the load between two readings", () => {
+  const icons = { cpu: "C", gpu: "G", drive: "D" }
+  const first = Model.parseBrief(JSON.stringify({ cpuTemp: 71, ssdTemp: 48, gpu: { temp: 60 }, cpuBusy: 1000, cpuTotal: 4000 }), null)
+  assert.equal(first.load, null)
+  assert.equal(Model.barText(first, icons, true), "C 71° G 60° D 48°")
+
+  const second = Model.parseBrief(JSON.stringify({ cpuTemp: 73, ssdTemp: 48, gpu: null, cpuBusy: 1300, cpuTotal: 5000 }), first)
+  assert.equal(second.load, 30)
+  assert.equal(Model.barText(second, icons, true), "C 73° 30% D 48°")
+  assert.equal(Model.barText(second, icons, false), "C 73° D 48°")
+
+  // A cached reading has the same counters: the last load stays
+  const same = Model.parseBrief(JSON.stringify({ cpuTemp: 73, ssdTemp: null, gpu: null, cpuBusy: 1300, cpuTotal: 5000 }), second)
+  assert.equal(same.load, 30)
+  assert.equal(Model.barText(same, icons, false), "C 73°")
+
+  assert.equal(Model.parseBrief("broken", first), null)
+  assert.equal(Model.barText(null, icons, true), "C –")
+})
+
+test("the full report can stand in for a brief one", () => {
+  const status = Model.parse(JSON.stringify(report))
+  assert.deepEqual(Model.briefOf(status, { cpuBusy: 5, cpuTotal: 9 }),
+    { cpuTemp: 88, ssdTemp: 52, gpuTemp: 62, cpuBusy: 5, cpuTotal: 9, load: 99 })
+})

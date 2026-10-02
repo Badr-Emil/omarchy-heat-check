@@ -4,13 +4,21 @@ Bar widget that answers one question: why are my fans so loud?
 
 ![Heat Check panel](preview.png)
 
-- **Temperatures** of the processor, the graphics card and the drive
+- **Live readings in the bar**: the temperatures of the processor, the graphics card and the drive, updated every few seconds
 - **Why the fans are working**, in plain sentences: which program keeps how many processor cores busy, what the graphics card draws, and whether the Performance profile is on
 - **Busiest programs**, measured over the last second rather than averaged since they started. Helper processes are named for what they do: a browser tab, the browser's graphics process, something inside a container
 - **End**: ask one of your own programs to quit, with a second press to confirm
 - **Power profile**: switch between Quiet, Balanced and Performance
 
-The bar icon turns to the alert colour while the processor is hot.
+The readings turn to the alert colour while the processor is hot. Click them to open the panel.
+
+To put the widget in the middle of the bar, next to the weather:
+
+```bash
+omarchy bar move io.github.badr-emil.heat-check --after omarchy.weather
+```
+
+The centre of the bar is narrow on a laptop screen. If the readings run into the widgets on the right, move a few of those away or switch `showReadings` off to get a single fan icon instead.
 
 Keyboard: `↑` `↓` (or `j` `k`) choose a program, `x` ends it (press twice), `←` `→` (or `h` `l`) change the power profile.
 
@@ -30,13 +38,15 @@ Fan speed is not shown: most laptops do not expose it to Linux.
 
 ## Settings
 
+- `showReadings` (default true): show the temperatures in the bar; off shows a fan icon. A vertical bar always gets the icon
+- `showLoad` (default false): also show the processor load in the bar
 - `hotAt` (default 85): processor temperature in °C from which the machine counts as hot
-- `refreshIntervalSec` (default 10): how often the bar icon reads the temperature while the panel is closed
-- `hideWhenCool` (default false): only show the icon while the processor is hot
+- `refreshIntervalSec` (default 5): how often the bar readings are updated
+- `hideWhenCool` (default false): only show the widget while the processor is hot
 
 ## Privileges
 
-Everything runs as your user. `scripts/heat-status` reads `/proc` and `/sys` and calls `powerprofilesctl get` and, for an awake NVIDIA card, `nvidia-smi`. The panel calls `powerprofilesctl set` and `scripts/heat-end`. Nothing runs as root, nothing is written to disk, nothing is downloaded, and no service is installed.
+Everything runs as your user. `scripts/heat-status` reads `/proc` and `/sys` and calls `powerprofilesctl get` and, for an awake NVIDIA card, `nvidia-smi`. The panel calls `powerprofilesctl set` and `scripts/heat-end`. The bar runs once per display, so the latest readings are shared through a small file in your private runtime directory (`$XDG_RUNTIME_DIR/omarchy-heat-check/`, in memory, gone after logout). Nothing runs as root, nothing is downloaded, and no service is installed.
 
 ## Development
 

@@ -7,11 +7,27 @@ const { spawn, spawnSync } = require("node:child_process")
 const script = name => path.join(__dirname, "..", "scripts", name)
 const run = (name, ...args) => spawnSync(script(name), args, { encoding: "utf8" })
 
-test("heat-status --brief prints the processor temperature", () => {
+test("heat-status --brief prints the sensor readings and CPU counters", () => {
   const result = run("heat-status", "--brief")
   assert.equal(result.status, 0, result.stderr)
   const report = JSON.parse(result.stdout)
   assert.ok(report.cpuTemp === null || (report.cpuTemp > 0 && report.cpuTemp < 130))
+  assert.ok(report.cpuTotal > report.cpuBusy && report.cpuBusy > 0)
+  assert.ok("gpu" in report && "ssdTemp" in report)
+})
+
+test("brief readings are shared for a moment and refreshed afterwards", async () => {
+  const first = run("heat-status", "--brief").stdout
+  assert.equal(run("heat-status", "--brief").stdout, first, "a second caller gets the cached reading")
+  await new Promise(resolve => setTimeout(resolve, 3100))
+  assert.notEqual(JSON.parse(run("heat-status", "--brief").stdout).cpuTotal, JSON.parse(first).cpuTotal)
+})
+
+test("without a runtime directory nothing is cached", () => {
+  const options = { encoding: "utf8", env: { PATH: process.env.PATH } }
+  const a = JSON.parse(spawnSync(script("heat-status"), ["--brief"], options).stdout)
+  const b = JSON.parse(spawnSync(script("heat-status"), ["--brief"], options).stdout)
+  assert.ok(b.cpuTotal > a.cpuTotal)
 })
 
 test("heat-status reports sensors, profile and the busiest processes", () => {

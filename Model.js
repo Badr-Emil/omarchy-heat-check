@@ -42,6 +42,54 @@ function parse(raw) {
   }
 }
 
+// The short report behind the bar text. `previous` is the report before it;
+// the two CPU counters together give the load in between.
+function parseBrief(raw, previous) {
+  var data = null
+  try {
+    data = raw ? JSON.parse(String(raw)) : null
+  } catch (e) {
+    data = null
+  }
+  if (!data || typeof data !== "object") return null
+
+  var brief = {
+    cpuTemp: number(data.cpuTemp),
+    ssdTemp: number(data.ssdTemp),
+    gpuTemp: data.gpu && typeof data.gpu === "object" ? number(data.gpu.temp) : null,
+    cpuBusy: number(data.cpuBusy),
+    cpuTotal: number(data.cpuTotal),
+    load: previous ? previous.load : null
+  }
+  if (previous && brief.cpuTotal !== null && previous.cpuTotal !== null && brief.cpuTotal > previous.cpuTotal) {
+    var share = (brief.cpuBusy - previous.cpuBusy) * 100 / (brief.cpuTotal - previous.cpuTotal)
+    brief.load = Math.max(0, Math.min(100, Math.round(share)))
+  }
+  return brief
+}
+
+function briefOf(status, previous) {
+  return {
+    cpuTemp: status.cpuTemp,
+    ssdTemp: status.ssdTemp,
+    gpuTemp: status.gpu ? status.gpu.temp : null,
+    cpuBusy: previous ? previous.cpuBusy : null,
+    cpuTotal: previous ? previous.cpuTotal : null,
+    load: status.load
+  }
+}
+
+// What the bar shows: one reading per sensor this machine has.
+function barText(brief, icons, showLoad) {
+  // Kept tight: on a laptop screen the bar's centre has little room.
+  if (!brief) return icons.cpu + " –"
+  var parts = [icons.cpu + " " + temperature(brief.cpuTemp)
+    + (showLoad && brief.load !== null ? " " + brief.load + "%" : "")]
+  if (brief.gpuTemp !== null) parts.push(icons.gpu + " " + temperature(brief.gpuTemp))
+  if (brief.ssdTemp !== null) parts.push(icons.drive + " " + temperature(brief.ssdTemp))
+  return parts.join(" ")
+}
+
 function number(value) {
   return typeof value === "number" && isFinite(value) ? value : null
 }
@@ -129,6 +177,9 @@ function reasons(status) {
 if (typeof module !== "undefined") {
   module.exports = {
     parse: parse,
+    parseBrief: parseBrief,
+    briefOf: briefOf,
+    barText: barText,
     temperature: temperature,
     level: level,
     headline: headline,
